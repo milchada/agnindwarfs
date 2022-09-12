@@ -29,6 +29,7 @@ def N(Lx, Mstar, alpha, beta, sigma):
     mu = alpha + beta*np.log10(Mstar)
     rv = norm(loc=mu, scale=sigma)
     return rv.pdf(np.log10(Lx))
+    #this returns the PDF, which doesn't add up to 1. Instead, PDF(x)*dx adds up to 1. 
 
 def log_likelihood(Lx, Mstar, alpha, beta, sigma, Mstar0):
     return np.log10(f_occ(Mstar, Mstar0)) + np.log10(N(Lx, Mstar, alpha, beta, sigma))
@@ -37,7 +38,7 @@ def log_likelihood(Lx, Mstar, alpha, beta, sigma, Mstar0):
 def p_BH(Lxi, Mstari, alpha, beta, sigma, Mstar0):
     rv = norm(loc=0, scale=1)
     logLxPred = (alpha + beta*np.log10(Mstari))
-    Phi = norm.cdf((np.log10(Lxi) - logLxPred)/sigma)
+    Phi = rv.cdf((np.log10(Lxi) - logLxPred)/sigma)
     focc = f_occ(Mstari, Mstar0)
 #     print(1- focc, focc*Phi)
     return Phi/((1 - focc) + focc*Phi)
@@ -68,29 +69,12 @@ def log_prob_Mstar0(Mstar0, I_n, Mstar): #I_n is a list where for each galaxy I_
     return np.log10(p)
 
 
-# def proposal(theta, i):
-#     if i ==0:
-#         low = 32; high = 40
-#     elif i == 1:
-#         low = 0.1; high = 2
-#     elif i == 2:
-#         low = 0.1; high = 3
-#     else:
-#         low = 7; high = 10
-#     rand = norm(loc=theta, scale = (high-low)/5.) #well this doesn't take into account the previous step. that's why.
-#     rv = rand.rvs(1)
-# #     print(rv)
-#     while (rv < low) or (rv > high):
-#         rv = rand.rvs(1)
-#     return rv
-
-# it's because the prior is gone! it was built into the proposal, which emcee doesn't use. 
-
 def log_prior(theta, priors):
-	if (theta[0] < priors[0][0]) or (theta[0] > priors[0][1]) or (theta[1] < priors[1][0]) or (theta[1] > priors[1][1]) or (theta[2] < priors[2][0]) or (theta[2] > priors[2][1]) or (theta[3] < priors[3][0]) or (theta[3] > priors[3][1]):
-		return -np.inf
-	else:
-		return 0
+    lnprior = 0
+    for i in range(len(priors)):
+        if (theta[i] < priors[i][0]) or (theta[i] > priors[i][1]):
+            lnprior = -np.inf
+    return lnprior
 
 def log_pdf(theta, Lx, Mstar, Llim, priors):
     alpha, beta, sigma, logMstar0 = theta
@@ -106,14 +90,29 @@ def log_pdf(theta, Lx, Mstar, Llim, priors):
     else:
         return logpdf + log_prior(theta, priors)
 
-def run_emcee(Lx, Mstar, Llim, filename, nwalkers=100, ndim=4, nsteps=int(1e4), nburn=100, priors=[[32,40],[.1,2],[.1,3],[7,10]]):
+def seed(priors, nwalkers, ndim, right=True):
     p0 = np.random.randn(nwalkers, ndim)
-    low = [32, .1, .1, 7]
-    high = [40, 2, 3, 10]
-    for i in range(ndim):
-        prange = (p0[:,i].max() - p0[:,i].min())
-        p0[:,i] *= (high[i] - low[i])/prange
-        p0[:,i] += (low[i] - p0[:,i].min())
+    if right:    
+        for i in range(ndim):
+            prange = (p0[:,i].max() - p0[:,i].min())
+            p0[:,i] *= (priors[i,1] - priors[i,0])/prange
+            p0[:,i] += (priors[i,0] - p0[:,i].min())
+    else:
+        for i in range(ndim):
+            p0[:int(nwalkers/2.),i] += priors[i,0]
+            p0[int(nwalkers/2.):,i] += priors[i,1]
+    return p0
+
+#assume a contamination fraction f
+#set f*Ntot detections to upper limits
+
+
+def run_emcee(galcat, filename, nwalkers=100, ndim=4, nsteps=int(1e4), nburn=100, 
+                priors=np.array([[32,40],[.1,2],[.1,3],[7,10]]), right=True):
+    Lx = galcat['Lx']
+    Mstar = galcat['Mstar'] 
+    Llim = galcat['Llim']
+    p0 = seed(priors, nwalkers, ndim, right=right)
     backend = emcee.backends.HDFBackend(filename)
     pool = Pool()
     sampler = emcee.EnsembleSampler(nwalkers, ndim, log_pdf, args=[Lx, Mstar, Llim, priors],backend=backend, pool=pool)
@@ -123,7 +122,17 @@ def run_emcee(Lx, Mstar, Llim, filename, nwalkers=100, ndim=4, nsteps=int(1e4), 
     sampler.run_mcmc(state, nsteps, progress=True)
     return sampler
     
-#so just run run_emcee(Lx, Mstar, Llim)
+def check(filename, ax):
+    # fig, ax = plt.subplots(nrows=2, ncols=2, sharex=True)
+    reader = emcee.backends.HDFBackend(filename)
+    samples = reader.get_chain()
+    med = np.median(samples, axis=1)
+    std = np.std(samples, axis=1)
+    for i in range(med.shape[1]):
+        ax.flatten()[i].cla()
+        ax.flatten()[i].plot(np.arange(len(med)), med[:,i],color='tab:blue')
+        ax.flatten()[i].plot(np.arange(len(med)), med[:,i]+std[:,i],color='tab:blue',linestyle='dotted')
+        ax.flatten()[i].plot(np.arange(len(med)), med[:,i]-std[:,i],color='tab:blue',linestyle='dotted')
 
 def plot(filename, figname):
 	reader = emcee.backends.HDFBackend(filename)
