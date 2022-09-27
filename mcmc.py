@@ -62,10 +62,8 @@ def latent(Lx, Mstar, Llim, alpha, beta, sigma, Mstar0):
     return I_n
 
 def log_prob_Mstar0(Mstar0, I_n, Mstar): #I_n is a list where for each galaxy I_n[i] = 1 if there is a BH and 0 otherwise
-    p = 1
-    for i in range(len(I_n)):
-        focc = f_occ(Mstar[i], Mstar0)
-        p *= (np.power(focc, I_n[i]) * np.power(1 - focc, 1-I_n[i]))
+    focc = f_occ(Mstar, Mstar0)
+    p = np.power(focc, I_n) * np.power(1 - focc, 1-I_n)
     return np.log10(p)
 
 
@@ -79,11 +77,14 @@ def log_prior(theta, priors):
 def log_pdf(theta, Lx, Mstar, Llim, priors):
     alpha, beta, sigma, logMstar0 = theta
     Mstar0 = 10**logMstar0
-    likely = np.sum(log_likelihood(Lx, Mstar, alpha, beta, sigma, Mstar0))
-    print("Log likelihood: ", likely/len(Lx))
+    detect = (Lx > Llim)
+    likely = log_likelihood(Lx, Mstar, alpha, beta, sigma, Mstar0)
+    likely = np.sum(likely[(likely > -np.inf)*(detect)]) #sum over detections
+
     I_n = latent(Lx, Mstar, Llim, alpha, beta, sigma, Mstar0)
-    print("f_BH: ", sum(I_n)/len(Lx)) #why is this always 1 for everyone?
     prob = log_prob_Mstar0(Mstar0, I_n, Mstar)
+    prob = np.sum(prob[(prob > -np.inf)*(~detect)]) #sum over non-detections
+    
     logpdf = (likely + prob)/len(Lx)
     if np.isnan(logpdf):
         return -np.inf
@@ -102,9 +103,6 @@ def seed(priors, nwalkers, ndim, right=True):
             p0[:int(nwalkers/2.),i] += priors[i,0]
             p0[int(nwalkers/2.):,i] += priors[i,1]
     return p0
-
-#assume a contamination fraction f
-#set f*Ntot detections to upper limits
 
 
 def run_emcee(galcat, filename, nwalkers=100, ndim=4, nsteps=int(1e4), nburn=100, 
