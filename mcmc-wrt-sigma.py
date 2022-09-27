@@ -66,20 +66,21 @@ def latent(Lx, vstar, Mstar, Llim, Mstar0, alpha, beta, sigma):
     return I_n
 
 def log_prob_Mstar0(Mstar0, I_n, Mstar): 
-    p = 1
-    for i in range(len(I_n)):
-        focc = f_occ(Mstar[i], Mstar0)
-        p *= (np.power(focc, I_n[i]) * np.power(1 - focc, 1-I_n[i]))
+    focc = f_occ(Mstar, Mstar0)
+    p = (np.power(focc, I_n) * np.power(1 - focc, 1-I_n))
     return np.log10(p)
 
 def log_pdf(theta, Lx, Mstar, vstar, Llim, priors):
     alpha, beta, sigma, logMstar0 = theta
     Mstar0 = 10**logMstar0
-    likely = np.sum(log_likelihood(Lx, Mstar, vstar, Mstar0, alpha, beta, sigma))
-    print("Log likelihood: ", likely/len(Lx))
+    detect = (Lx > Llim)
+
+    likely = log_likelihood(Lx, Mstar, vstar, Mstar0, alpha, beta, sigma)
+    likely = np.sum(likely[(likely > -np.inf)*detect]) #sum over detections
+
     I_n = latent(Lx, vstar, Mstar, Llim, Mstar0, alpha, beta, sigma)
-    print("f_BH: ", sum(I_n)/len(Lx)) #why is this always 1 for everyone?
     prob = log_prob_Mstar0(Mstar0, I_n, Mstar)
+    prob = np.sum(prob[(prob > -np.inf)*~detect])      #sum over non-detections
     logpdf = (likely + prob)/len(Lx) + log_prior(theta, priors)
     if not np.isnan(logpdf):
     	return logpdf 
