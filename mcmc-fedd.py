@@ -41,7 +41,7 @@ def pdf(fedd, beta, fedd_min, fedd_max, cum=False): #tested, works fine!
             return pdf*fedd 
         else:
             return pdf
-    if (fedd_min <= fedd) and (fedd <= fedd_max):
+    elif (fedd <= fedd_max):
         cdf_min = (fedd_min**(1-beta))/(1-beta)
         cdf_max = (fedd_max**(1-beta))/(1-beta)
         cdf_tot = cdf_max - cdf_min
@@ -66,7 +66,6 @@ def N(Lx, vstar, beta, fedd_min, fedd_max, fduty): #tested, works fine!
 def log_likelihood(Lx, vstar, Mstar, beta, fedd_min, fedd_max, fduty, Mstar0): #same as in other models
     #works fine.. except there is a lot of -inf, so adding must be done carefully
     return np.log10(f_occ(Mstar, Mstar0)) + np.log10(N(Lx, vstar, beta, fedd_min, fedd_max, fduty))
-#            * (1 - f_occ(Mstar, Mstar0))*np.kron(np.log10(Lx) + 1e4)      when is Lx going to be 1e4?? pretty nonsensical I think. 
 
 def p_BH(Lx, vstar, Mstar, beta, fedd_min,fedd_max, fduty, Mstar0):
     #tested, works, but I'm not sure it's correct.
@@ -74,7 +73,7 @@ def p_BH(Lx, vstar, Mstar, beta, fedd_min,fedd_max, fduty, Mstar0):
     p_if_on = np.array([pdf(fi, beta, fedd_min, fedd_max, cum=True) for fi in fedd])
     Phi = p_if_on*fduty + (1 - fduty) #i.e. fduty chance that AGN is on but below detection limit, (1-fduty) chance that it is off; either way, BH exists. 
     focc = f_occ(Mstar, Mstar0)
-    pbh = Phi/((1 - focc) + focc*Phi)
+    pbh = focc*Phi/((1 - focc) + focc*Phi)
     pbh[pbh < 0] = 0
     pbh[pbh > 1] = 1
     pbh[np.isnan(pbh)] = 0
@@ -93,14 +92,10 @@ def latent(Lx, vstar, Mstar, Llim, beta, fedd_min, fedd_max, fduty, Mstar0):
     I_n[Lx > Llim] = 1
     return I_n
 
-def log_prob_Mstar0(Mstar0, I_n, Mstar, weights): 
+def log_prob_Mstar0(Mstar0, I_n, Mstar): 
 #same as in other models, tested.
-    p = 1
-    for i in range(len(I_n)):
-        focc = f_occ(Mstar[i], Mstar0)
-        pi = np.power(focc, I_n[i]) * np.power(1 - focc, 1-I_n[i])#np.power(, weights[i])
-        if pi:
-            p *= pi
+    focc = f_occ(Mstar, Mstar0)
+    pi = np.power(focc, I_n) * np.power(1 - focc, 1-I_n)#np.power(, weights[i])
     return np.log10(p)
 
 def log_prior(theta, priors):
@@ -111,21 +106,24 @@ def log_prior(theta, priors):
     return lnprior
 
 def log_pdf(theta, Lx, Mstar, vstar, Llim, priors, weights):
-    beta, log_fedd_min, log_fedd_max, log_fduty, logMstar0 = theta
+    beta, log_fedd_min, log_fedd_max, logMstar0 = theta
     Mstar0 = 10**logMstar0
     fedd_min = 10**log_fedd_min
     fedd_max = 10**log_fedd_max
-    fduty = 10**log_fduty
+    fduty = 1#0**log_fduty
+    detect = (Lx > Llim)
+
     likely = log_likelihood(Lx, vstar, Mstar, beta, fedd_min, fedd_max, fduty, Mstar0)
     likely *= weights
-
-    likely = np.sum(likely[likely > -np.inf])
-    print("Log likelihood: ", likely/len(Lx))
+    likely = np.sum(likely[(likely > -np.inf)*detect]) #sum over detections
+    
     I_n = latent(Lx, vstar, Mstar, Llim, beta, fedd_min, fedd_max, fduty, Mstar0)
-    print("f_BH: ", sum(I_n)/len(Lx)) 
-    prob = log_prob_Mstar0(Mstar0, I_n, Mstar, weights) #this is where the infinities are happening
-    print(prob)
-    logpdf = (likely + prob)/len(Lx)
+    prob = log_prob_Mstar0(Mstar0, I_n, Mstar) #this is where the infinities are happening
+    prob *= weights
+    prob = np.sum(prob[(prob > -np.inf) * ~detect]) #sum over non-detections
+
+    logpdf = (likely + prob)/len(Lx) #sets to order 1
+    
     if np.isnan(logpdf):
         print('PDF = 0')
         return -np.inf
@@ -133,20 +131,15 @@ def log_pdf(theta, Lx, Mstar, vstar, Llim, priors, weights):
         return logpdf + log_prior(theta, priors)
 
 def seed(priors, nwalkers, ndim, right=True):
-    p0 = np.random.randn(nwalkers, ndim)
-    if right:    
-        for i in range(ndim):
-            prange = (p0[:,i].max() - p0[:,i].min())
-            p0[:,i] *= (priors[i,1] - priors[i,0])/prange
-            p0[:,i] += (priors[i,0] - p0[:,i].min())
-    else:
-        for i in range(ndim):
-            p0[:int(nwalkers/2.),i] += priors[i,0]
-            p0[int(nwalkers/2.):,i] += priors[i,1]
+    p0 = np.random.uniform(low = priors[:,0], high = priors[:, 1], size=(nwalkers, ndim))
+    if not right:
+        p0 [:int(nwalkers/2)] /= 2
+        p0 [int(nwalkers/2):] *= 2
     return p0
 
-def run_emcee(galcat, filename, nwalkers=100, ndim=4, nsteps=int(1e4), nburn=100, 
-                priors=np.array([[.1,4],[-10,-5],[0,1],[-1,0],[7,10]]), right=True):
+def run_emcee(galcat, filename, nwalkers=100, nsteps=int(1e4), nburn=100, 
+                priors=np.array([[.1,4],[-6,-2],[0,1],[7,10]]), right=True):
+    ndim = len(priors)
     Lx = galcat['Lx']
     Mstar = galcat['Mstar'] 
     vstar = galcat['vstar'] 
