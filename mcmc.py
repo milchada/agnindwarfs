@@ -135,5 +135,5 @@ def check(filename, ax):
 def plot(filename, figname):
 	reader = emcee.backends.HDFBackend(filename)
 	samples = reader.get_chain(flat=True)
-	fig = corner.corner(samples,labels=[r"$\alpha$", r"$\beta$", r"$\sigma$", r"$M_{*,0}$"], range=[[20,50],[-5,5],[-2,6],[5,12]])
+	fig = corner.corner(samples,labels=[r"$\alpha$", r"$\beta$", r"$\sigma$", r"$M_{*,0}$"], range=[[32,40],[.1,2],[.1,3],[7,10]])
 	fig.savefig(figname)

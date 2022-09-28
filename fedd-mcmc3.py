@@ -1,4 +1,5 @@
 #in this model I take fedd_min and fedd_max from the observations, and instead vary beta and f_duty
+#here i also incorporate p(Mstar)
 
 import numpy as np
 import matplotlib.pylab as plt
@@ -21,6 +22,10 @@ lcdm = default_cosmology.get()
 allpts = pd.read_csv('allpts.csv', header=0)
 # amuse = pd.read_csv('AMUSEGalaxies.csv', header=0)
 gama_sdss = pd.read_csv('gama_sdss_sigma.csv', header=0)
+
+def p_x(Mstar):
+    #i have to fit this with Gaussians.. how many?
+    return 
 
 def f_occ(Mstar, Mstar0): #tested, works fine!
     return 0.5 * (1+ np.tanh(pow(2.5, abs(8.9 - np.log10(Mstar0)))*np.log10(Mstar/Mstar0)))
@@ -181,5 +186,5 @@ def plot(filename, figname):
 	reader = emcee.backends.HDFBackend(filename)
 	samples = reader.get_chain(flat=True)
 	fig = corner.corner(samples,labels=[r'$\beta$', r'log(f$_{duty}$)', r'log($M_{*,0}$)'], 
-        range=[[.1,4],[-1,0],[7,10]])
+        range=[[.1,4],[-1,0],[6,10]])
 	fig.savefig(figname)
