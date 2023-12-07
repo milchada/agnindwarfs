@@ -27,6 +27,10 @@ def log_Mbh(vstar, alpha=8.33, beta=5.77, eps=0.43): #tested, works fine!
     average = alpha + beta*np.log10(vstar/200)
     return np.array([max(0,norm(loc = av, scale=eps).rvs(size=1)[0]) for av in average])    
 
+def log_Mbh_Mstar(Mstar, alpha = 8.56, beta= 1.34, sigma = 0.17):
+    average = alpha + beta*np.log10(Mstar/1e11)
+    return average
+
 def f_edd(Lx, vstar,kX = 0.1): #tested, works fine!
     Mbh = 10**log_Mbh(vstar)
     Ledd = 1e38 * Mbh

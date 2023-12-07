@@ -10,15 +10,13 @@ from scipy.stats import norm, bernoulli, cumfreq
 from scipy.optimize import curve_fit
 
 import pandas as pd
-import corner, glob, multiprocessing, emcee
+import glob, multiprocessing, emcee
 from multiprocessing import Pool
 ncpu = multiprocessing.cpu_count()
 
 lcdm = default_cosmology.get()
-
+#amuse = pd.read_csv('AMUSEGalaxies.csv', header=0)
 allpts = pd.read_csv('allpts.csv', header=0)
-amuse = pd.read_csv('AMUSEGalaxies.csv', header=0)
-gama = pd.read_csv('gama_all.csv', header=0)
 gama_sdss = pd.read_csv('gama_sdss_all.csv', header=0)
 
 def f_occ(Mstar, Mstar0):
@@ -66,7 +64,6 @@ def log_prob_Mstar0(Mstar0, I_n, Mstar): #I_n is a list where for each galaxy I_
     p = np.power(focc, I_n) * np.power(1 - focc, 1-I_n)
     return np.log10(p)
 
-
 def log_prior(theta, priors):
     lnprior = 0
     for i in range(len(priors)):
@@ -74,17 +71,17 @@ def log_prior(theta, priors):
             lnprior = -np.inf
     return lnprior
 
-def log_pdf(theta, Lx, Mstar, Llim, priors):
+def log_pdf(theta, Lx, Mstar, Llim, weights, priors):
     alpha, beta, sigma, logMstar0 = theta
     Mstar0 = 10**logMstar0
     detect = (Lx > Llim)
     likely = log_likelihood(Lx, Mstar, alpha, beta, sigma, Mstar0)
-    likely = np.sum(likely[(likely > -np.inf)*(detect)]) #sum over detections
-
+    likely = np.sum((likely*weights)[detect])
+    print("Log likelihood: ", likely/len(Lx))
     I_n = latent(Lx, Mstar, Llim, alpha, beta, sigma, Mstar0)
+    print("f_BH: ", sum(I_n)/len(Lx)) #why is this always 1 for everyone?
     prob = log_prob_Mstar0(Mstar0, I_n, Mstar)
-    prob = np.sum(prob[(prob > -np.inf)*(~detect)]) #sum over non-detections
-    
+    prob = np.sum((prob*weights)[~detect])
     logpdf = (likely + prob)/len(Lx)
     if np.isnan(logpdf):
         return -np.inf
@@ -104,36 +101,54 @@ def seed(priors, nwalkers, ndim, right=True):
             p0[int(nwalkers/2.):,i] += priors[i,1]
     return p0
 
+#assume a contamination fraction f
+#set f*Ntot detections to upper limits
+def create_matched_sample(obs, sam, dm=0.2):
+   mobs = obs['Mstar']
+   msam = sam['Mstar']
+   cat = []
+   for m in mobs:
+      msub = sam[(msam > (1-dm)*m)*(msam < (1+dm)*m)]
+      if len(msub) > 1:
+         ind = np.random.randint(0, len(msub)-1)
+         cat.append(msub.index[ind])
+      else:
+         cat.append(msub.index)
+   match = sam.iloc[cat]
+   match.index = np.arange(len(match))
+   return match
 
 def run_emcee(galcat, filename, nwalkers=100, ndim=4, nsteps=int(1e4), nburn=100, 
                 priors=np.array([[32,40],[.1,2],[.1,3],[7,10]]), right=True):
     Lx = galcat['Lx']
     Mstar = galcat['Mstar'] 
     Llim = galcat['Llim']
+    try:
+        weights = galcat['w_obs']
+    except KeyError:
+        weights = np.ones(len(Lx))
+    if max(Lx) < 100:
+        Lx = 10**Lx
+    if max(Mstar) < 100:
+        Mstar = 10**Mstar
+    if max(Llim) < 100:
+        Llim = 10**Llim
     p0 = seed(priors, nwalkers, ndim, right=right)
     backend = emcee.backends.HDFBackend(filename)
     pool = Pool()
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, log_pdf, args=[Lx, Mstar, Llim, priors],backend=backend, pool=pool)
+    sampler = emcee.EnsembleSampler(nwalkers, ndim, log_pdf, args=[Lx, Mstar, Llim, weights, priors],backend=backend, pool=pool)
     #burn in
     state = sampler.run_mcmc(p0, nburn)
     sampler.reset()
     sampler.run_mcmc(state, nsteps, progress=True)
     return sampler
-    
-def check(filename, ax):
-    # fig, ax = plt.subplots(nrows=2, ncols=2, sharex=True)
-    reader = emcee.backends.HDFBackend(filename)
-    samples = reader.get_chain()
-    med = np.median(samples, axis=1)
-    std = np.std(samples, axis=1)
-    for i in range(med.shape[1]):
-        ax.flatten()[i].cla()
-        ax.flatten()[i].plot(np.arange(len(med)), med[:,i],color='tab:blue')
-        ax.flatten()[i].plot(np.arange(len(med)), med[:,i]+std[:,i],color='tab:blue',linestyle='dotted')
-        ax.flatten()[i].plot(np.arange(len(med)), med[:,i]-std[:,i],color='tab:blue',linestyle='dotted')
 
-def plot(filename, figname):
-	reader = emcee.backends.HDFBackend(filename)
-	samples = reader.get_chain(flat=True)
-	fig = corner.corner(samples,labels=[r"$\alpha$", r"$\beta$", r"$\sigma$", r"$M_{*,0}$"], range=[[32,40],[.1,2],[.1,3],[7,10]])
-	fig.savefig(figname)
+if __name__ == "__main__":
+    files = glob.glob('agnms*csv'); files.sort()
+    for file in files:
+        g = pd.read_csv(file)
+        g = g[g['Mstar'] > 1e8]
+        g['Llim'] = 1e34
+        g.index = np.arange(len(g))
+        name = file.split('_pme')[0]
+        run_emcee(g, 'lx-mstar-%s-flim1e34.h5' % name, nsteps=2000, nwalkers=48,nburn=1)  
